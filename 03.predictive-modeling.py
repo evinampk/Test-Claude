@@ -20,8 +20,10 @@
 #   FIX 3 — CHAID nugget found via getTypeName() loop (not getLabel)
 #   FIX 4 — Partition node explicitly configured: training=70 / testing=30 / validation=0
 #            Previously created with no properties — Modeler silently defaulted to 50/50
-#   FIX 5 — Evaluation path corrected: part → sel_test → nugget → ev
-#            Previously nugget had no upstream data source; evaluation produced no output
+#   FIX 5 — Evaluation path corrected: nugget → ev
+#            Nugget auto-inherits upstream from builder (bal → nugget).
+#            stream.link(sel_test, nugget) fails silently — nugget allows only one upstream.
+#            Correct pattern: just link nugget → ev after builder runs.
 #
 # *** BEFORE RUNNING: verify DSN name and table name match your environment ***
 
@@ -162,18 +164,12 @@ sel_train = stream.createAt("select", "Training Only", 1350, 300)
 sel_train.setPropertyValue("mode",      "Include")
 sel_train.setPropertyValue("condition", 'Partition = "1_Training"')
 
-# TEST SELECT — evaluation path   (FIX 5)
-# 30% test partition flows through the nugget for an unbiased gains chart.
-sel_test = stream.createAt("select", "Test Only", 1350, 500)
-sel_test.setPropertyValue("mode",      "Include")
-sel_test.setPropertyValue("condition", 'Partition = "2_Testing"')
-
 bal = stream.createAt("balance", "Balance", 1500, 300)
 
 # CHAID MODEL
 chaid_node = stream.createAt("chaid", "CHAID Model", 1650, 300)
 
-# EVALUATION — gains chart
+# EVALUATION — gains chart (placed below nugget on canvas)
 ev = stream.createAt("evaluation", "Gains Chart", 1800, 500)
 
 # LINKS
@@ -206,11 +202,7 @@ stream.link(part,      sel_train)
 stream.link(sel_train, bal)
 stream.link(bal,       chaid_node)
 
-# Evaluation path: partition fans out to test select (FIX 5)
-# sel_test → nugget → ev wired after builder runs (nugget doesn't exist yet)
-stream.link(part, sel_test)
-
-# RUN — drives full chain from both sources through merge, type, partition, CHAID
+# RUN model builder — nugget is auto-created and inherits upstream from builder
 chaid_node.run([])
 
 # FIND CHAID NUGGET — safe pattern: loop getNodes() and check getTypeName()
@@ -223,9 +215,9 @@ for node in stream.getNodes():
 if chaid_nugget is None:
     raise RuntimeError("chaidmodel nugget not found — check CHAID built successfully")
 
-# FIX 5: Complete evaluation path — sel_test already receives data from part.
-# nugget scores the 30% test partition → evaluation produces an unbiased gains chart.
+# Nugget already has data flowing from the training path (bal → nugget auto-wired).
+# Just add the downstream connection: nugget → evaluation.
+# Do NOT try to link sel_test → nugget — nugget can only have one upstream data source.
 chaid_nugget.setLocation(1650, 500)
-stream.link(sel_test,     chaid_nugget)
 stream.link(chaid_nugget, ev)
 ev.run([])
