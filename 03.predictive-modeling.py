@@ -149,18 +149,13 @@ type_node = stream.createAt("type", "Set Roles", 1050, 300)
 type_node.setKeyedPropertyValue("type",      "CHURN_FLAG", "Flag")
 type_node.setKeyedPropertyValue("direction", "CHURN_FLAG", "Target")
 
-# PARTITION — derive-based 70/30 split (verified workaround)
-# partition node properties are unverified in 18.5:
-#   - "training_partition" → AEQMJ0100E (undefined)
-#   - alternatives to investigate: "training_size", "size_1", "train_percent"
-# Using a Derive node instead — same "Partition" field values as the real Partition node.
-# mod(@INDEX + 9, 10) < 7  →  exactly 70% training / 30% testing, deterministic per run.
-#   @INDEX 1..7  → mod=0..6 < 7 → "1_Training"
-#   @INDEX 8..10 → mod=7..9 ≥ 7 → "2_Testing"  (repeats every 10 records)
-drv_part = stream.createAt("derive", "Partition", 1200, 300)
-drv_part.setPropertyValue("new_name",     "Partition")
-drv_part.setPropertyValue("formula_expr",
-    "if mod(@INDEX + 9, 10) < 7 then '1_Training' else '2_Testing' endif")
+# PARTITION — 70% training / 30% testing
+# ⚠️ Property names under investigation — run test_partition_properties.py to verify.
+# "training_partition" confirmed wrong (AEQMJ0100E). Trying "training_size" next.
+part = stream.createAt("partition", "Partition 70-30", 1200, 300)
+part.setPropertyValue("training_size",   70)
+part.setPropertyValue("testing_size",    30)
+part.setPropertyValue("validation_size", 0)
 
 sel_train = stream.createAt("select", "Training Only", 1350, 300)
 sel_train.setPropertyValue("mode",      "Include")
@@ -199,20 +194,20 @@ stream.link(flt_drop_churn, merge_label)
 # Branch B into merge AFTER Branch A — makes Branch A the primary in partialOuter join
 stream.link(flt_b, merge_label)
 
-# Main pipeline: merge → fill nulls → field filter → type → derive-partition
+# Main pipeline: merge → fill nulls → field filter → type → partition
 stream.link(merge_label, fil)
 stream.link(fil,         flt_fields)
 stream.link(flt_fields,  type_node)
-stream.link(type_node,   drv_part)
+stream.link(type_node,   part)
 
-# Training path: partition derive → training select → balance → CHAID builder
-stream.link(drv_part,  sel_train)
+# Training path: partition → training select → balance → CHAID builder
+stream.link(part,      sel_train)
 stream.link(sel_train, bal)
 stream.link(bal,       chaid_node)
 
-# Evaluation path: partition derive fans out to test select (FIX 5)
+# Evaluation path: partition fans out to test select (FIX 5)
 # sel_test → nugget → ev wired after builder runs (nugget doesn't exist yet)
-stream.link(drv_part, sel_test)
+stream.link(part, sel_test)
 
 # RUN — drives full chain from both sources through merge, type, partition, CHAID
 chaid_node.run([])

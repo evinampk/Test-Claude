@@ -285,14 +285,13 @@ type_node = stream.createAt("type", "Set Roles", 250, 200)
 type_node.setKeyedPropertyValue("type",      "TARGET_FIELD", "flag")
 type_node.setKeyedPropertyValue("direction", "TARGET_FIELD", "Target")
 
-# -- PARTITION: 70% train / 30% test — derive-based workaround ✅
-# Partition node property names unverified in 18.5 (training_partition → AEQMJ0100E).
-# Derive node produces identical field + values: "1_Training" / "2_Testing".
-# mod(@INDEX + 9, 10) < 7 → 70% training, 30% testing, deterministic.
-drv_part = stream.createAt("derive", "Partition", 400, 200)
-drv_part.setPropertyValue("new_name",     "Partition")
-drv_part.setPropertyValue("formula_expr",
-    "if mod(@INDEX + 9, 10) < 7 then '1_Training' else '2_Testing' endif")
+# -- PARTITION: 70% train / 30% test
+# ⚠️ Property names under investigation — see test_partition_properties.py.
+# Currently testing: "training_size" / "testing_size" / "validation_size"
+part = stream.createAt("partition", "Partition 70-30", 400, 200)
+part.setPropertyValue("training_size",   70)   # ⚠️ under test
+part.setPropertyValue("testing_size",    30)   # ⚠️ under test
+part.setPropertyValue("validation_size", 0)    # ⚠️ under test
 
 # -- TRAINING PATH: balance then build model
 sel_train = stream.createAt("select", "Training Only", 550, 200)
@@ -311,17 +310,17 @@ sel_test.setPropertyValue("condition", 'Partition = "2_Testing"')
 ev = stream.createAt("evaluation", "Gains Chart", 1000, 400)
 
 # -- LINKS
-stream.link(src,      type_node)
-stream.link(type_node, drv_part)
+stream.link(src,       type_node)
+stream.link(type_node, part)
 
 # Training path
-stream.link(drv_part,  sel_train)
+stream.link(part,      sel_train)
 stream.link(sel_train, bal)
 stream.link(bal,       chaid)
 
-# Evaluation path — fans out from derive-partition node
+# Evaluation path — fans out from partition node
 # sel_test → nugget link added AFTER builder runs (nugget doesn't exist yet)
-stream.link(drv_part, sel_test)
+stream.link(part, sel_test)
 
 # -- RUN MODEL
 chaid.run([])
@@ -354,8 +353,8 @@ src → type → part ──────────────── sel_train
 ### Key rules
 | Rule | Detail |
 |------|--------|
-| Use derive for partition, not Partition node | Partition node properties undefined in 18.5 |
 | type node: use `"type"` + `"direction"` separately | `"types"` with list → AEQMJ0100E |
+| Partition node properties: under investigation | run test_partition_properties.py |
 | Balance only on training data | never apply balance to test partition |
 | Nugget link done after builder runs | nugget node doesn't exist before run |
 | Evaluation input = test partition | training data in evaluation = data leakage |

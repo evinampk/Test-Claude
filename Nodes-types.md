@@ -260,38 +260,27 @@ dis.setPropertyValue("mode",      "Include")                     # keep first re
 # Pair with a filter node to rename the retained sort key field
 ```
 
-### partition — Split data into training / testing partitions ⚠️ PROPERTIES UNVERIFIED
+### partition — Split data into training / testing partitions ⚠️ PROPERTIES UNDER INVESTIGATION
 ```python
-# Node type string "partition" is correct — node creates fine.
-# Property names for setting the split % are UNVERIFIED in 18.5.
-# Confirmed WRONG (AEQMJ0100E — property undefined):
-#   ❌ part.setPropertyValue("training_partition", 70)
-
-# Candidates still to test — try one at a time:
-#   part.setPropertyValue("training_size",    70)   # ⚠️ try first
-#   part.setPropertyValue("testing_size",     30)
-#   part.setPropertyValue("validation_size",  0)
+# Node type string "partition" — creates fine.
+# Property names for setting the split % are NOT yet verified in 18.5.
+# Run test_partition_properties.py to discover correct names.
 #
-#   part.setPropertyValue("size_1",  70)            # ⚠️ try second
-#   part.setPropertyValue("size_2",  30)
-#   part.setPropertyValue("size_3",  0)
+# Confirmed WRONG (AEQMJ0100E):
+#   ❌ "training_partition" / "testing_partition" / "validation_partition"
 #
-#   part.setPropertyValue("train_percent", 70)      # ⚠️ try third
-#   part.setPropertyValue("test_percent",  30)
-
-# ── VERIFIED WORKAROUND — derive-based 70/30 partition ✅ ──────────────────
-# Uses verified Derive node. Produces identical field values to the real Partition node.
-# mod(@INDEX + 9, 10) < 7  →  first 7 of every 10 records = "1_Training" (70%)
-#                              last  3 of every 10 records = "2_Testing"  (30%)
-# Deterministic: same split every run, no seed needed.
-drv_part = stream.createAt("derive", "Partition", 1200, 300)
-drv_part.setPropertyValue("new_name",     "Partition")
-drv_part.setPropertyValue("formula_expr",
-    "if mod(@INDEX + 9, 10) < 7 then '1_Training' else '2_Testing' endif")
-
-# Downstream select nodes — same as with the real Partition node:
-#   sel_train: condition = 'Partition = "1_Training"'
-#   sel_test:  condition = 'Partition = "2_Testing"'
+# Currently testing:
+#   ⚠️ "training_size" / "testing_size" / "validation_size"
+#
+# Other candidates queued:
+#   "size_1" / "size_2" / "size_3"
+#   "train_percent" / "test_percent"
+#
+# Will document verified pattern here once confirmed in Modeler.
+part = stream.createAt("partition", "Partition 70-30", 1200, 300)
+part.setPropertyValue("training_size",   70)   # ⚠️ under test
+part.setPropertyValue("testing_size",    30)   # ⚠️ under test
+part.setPropertyValue("validation_size", 0)    # ⚠️ under test
 ```
 
 ### balance — Oversample / undersample records ✅ (type string only)
