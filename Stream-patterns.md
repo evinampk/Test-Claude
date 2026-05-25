@@ -286,12 +286,12 @@ type_node.setKeyedPropertyValue("type",      "TARGET_FIELD", "flag")
 type_node.setKeyedPropertyValue("direction", "TARGET_FIELD", "Target")
 
 # -- PARTITION: 70% train / 30% test
-# ⚠️ Property names under investigation — see test_partition_properties.py.
-# Currently testing: "training_size" / "testing_size" / "validation_size"
+# ✅ VERIFIED property names in Modeler 18.5
 part = stream.createAt("partition", "Partition 70-30", 400, 200)
-part.setPropertyValue("training_size",   70)   # ⚠️ under test
-part.setPropertyValue("testing_size",    30)   # ⚠️ under test
-part.setPropertyValue("validation_size", 0)    # ⚠️ under test
+part.setPropertyValue("training_size",   70)
+part.setPropertyValue("testing_size",    30)
+part.setPropertyValue("validation_size", 0)
+part.setPropertyValue("random_seed",     12345)
 
 # -- TRAINING PATH: balance then build model
 sel_train = stream.createAt("select", "Training Only", 550, 200)
@@ -354,7 +354,7 @@ src → type → part ──────────────── sel_train
 | Rule | Detail |
 |------|--------|
 | type node: use `"type"` + `"direction"` separately | `"types"` with list → AEQMJ0100E |
-| Partition node properties: under investigation | run test_partition_properties.py |
+| Partition node: use `training_size` / `testing_size` / `random_seed` | `training_partition` etc → AEQMJ0100E |
 | Balance only on training data | never apply balance to test partition |
 | Nugget link done after builder runs | nugget node doesn't exist before run |
 | Evaluation input = test partition | training data in evaluation = data leakage |

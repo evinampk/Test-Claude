@@ -149,13 +149,14 @@ type_node = stream.createAt("type", "Set Roles", 1050, 300)
 type_node.setKeyedPropertyValue("type",      "CHURN_FLAG", "Flag")
 type_node.setKeyedPropertyValue("direction", "CHURN_FLAG", "Target")
 
-# PARTITION — 70% training / 30% testing
-# ⚠️ Property names under investigation — run test_partition_properties.py to verify.
-# "training_partition" confirmed wrong (AEQMJ0100E). Trying "training_size" next.
+# PARTITION — 70% training / 30% testing / 0% validation
+# ✅ VERIFIED property names (test_partition_properties.py):
+#   training_size / testing_size / validation_size / random_seed
 part = stream.createAt("partition", "Partition 70-30", 1200, 300)
 part.setPropertyValue("training_size",   70)
 part.setPropertyValue("testing_size",    30)
 part.setPropertyValue("validation_size", 0)
+part.setPropertyValue("random_seed",     12345)
 
 sel_train = stream.createAt("select", "Training Only", 1350, 300)
 sel_train.setPropertyValue("mode",      "Include")

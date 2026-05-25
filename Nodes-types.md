@@ -260,27 +260,28 @@ dis.setPropertyValue("mode",      "Include")                     # keep first re
 # Pair with a filter node to rename the retained sort key field
 ```
 
-### partition — Split data into training / testing partitions ⚠️ PROPERTIES UNDER INVESTIGATION
+### partition — Split data into training / testing partitions ✅
 ```python
-# Node type string "partition" — creates fine.
-# Property names for setting the split % are NOT yet verified in 18.5.
-# Run test_partition_properties.py to discover correct names.
+# ✅ VERIFIED property names (test_partition_properties.py — Modeler 18.5):
+#   training_size   — default 50
+#   testing_size    — default 50
+#   validation_size — default 0
+#   random_seed     — default 1234567
 #
-# Confirmed WRONG (AEQMJ0100E):
-#   ❌ "training_partition" / "testing_partition" / "validation_partition"
-#
-# Currently testing:
-#   ⚠️ "training_size" / "testing_size" / "validation_size"
-#
-# Other candidates queued:
-#   "size_1" / "size_2" / "size_3"
-#   "train_percent" / "test_percent"
-#
-# Will document verified pattern here once confirmed in Modeler.
+# ❌ CONFIRMED WRONG (AEQMJ0100E — property undefined):
+#   training_partition / testing_partition / validation_partition
+#   sampling_method / set_seed / seed
+#   size_1 / size_2 / size_3 / train_percent / test_percent
 part = stream.createAt("partition", "Partition 70-30", 1200, 300)
-part.setPropertyValue("training_size",   70)   # ⚠️ under test
-part.setPropertyValue("testing_size",    30)   # ⚠️ under test
-part.setPropertyValue("validation_size", 0)    # ⚠️ under test
+part.setPropertyValue("training_size",   70)
+part.setPropertyValue("testing_size",    30)
+part.setPropertyValue("validation_size", 0)
+part.setPropertyValue("random_seed",     12345)
+# training_size + testing_size + validation_size must sum to 100
+# Partition adds a "Partition" field with values "1_Training" and "2_Testing"
+# Downstream select nodes:
+#   sel_train: condition = 'Partition = "1_Training"'
+#   sel_test:  condition = 'Partition = "2_Testing"'
 ```
 
 ### balance — Oversample / undersample records ✅ (type string only)
