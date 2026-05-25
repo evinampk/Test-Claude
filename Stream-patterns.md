@@ -30,7 +30,8 @@ STAGE 3 — Target grain derives
 ---
 
 ## PATTERN A — Full Transaction Preparation → Customer Level ✅
-### Verified working in Modeler 18.5
+### Verified working in Modeler 18.5 — production run confirmed (01.transactions.py)
+### Also confirms: merge "key_fields" property name ✅ | distinct properties ✅ | filter properties ✅
 
 Use when: raw transaction file → customer-level KPI table
 Source grain: TransactionID

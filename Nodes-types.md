@@ -75,6 +75,7 @@ for node in stream.getNodes():
 | Source | Variable File | `"variablefile"` |
 | Source | Database | `"database"` |
 | Record Ops | Select | `"select"` |
+| Record Ops | Merge | `"merge"` |
 | Record Ops | Aggregate | `"aggregate"` |
 | Record Ops | Sort | `"sort"` |
 | Record Ops | Append | `"append"` |
@@ -106,7 +107,6 @@ for node in stream.getNodes():
 
 | Node | Likely String | Status |
 |------|--------------|--------|
-| Merge | `"merge"` | Not tested |
 | Reclassify | `"reclassify"` | Not tested |
 | Binning | `"binning"` | Not tested |
 | PCA/Factor | `"pca"` or `"factor"` | Not tested |
@@ -171,6 +171,24 @@ stream.link(src1, app)
 stream.link(src2, app)
 ```
 
+### merge — Join two streams on key fields ✅
+```python
+mrg = stream.createAt("merge", "Merge", 500, 200)
+mrg.setPropertyValue("method",     "Keys")        # ✅ verified
+mrg.setPropertyValue("key_fields", ["CardID"])    # ✅ list, not string
+
+# join options:
+# "inner"        — only matching records from both inputs
+# "fullOuter"    — all records from both inputs, nulls where no match
+# "partialOuter" — ALL records from the PRIMARY (first-linked) input;
+#                  only matched records from SECONDARY inputs
+mrg.setPropertyValue("join", "partialOuter")
+
+# Link order matters for "partialOuter":
+#   stream.link(primary_node, mrg)    ← linked FIRST = primary (all records kept)
+#   stream.link(secondary_node, mrg)  ← linked SECOND = secondary (matched only)
+```
+
 ### type — Set field roles and measurement levels ✅
 ```python
 types = stream.createAt("type", "Types", 250, 200)
@@ -194,10 +212,20 @@ drv.setPropertyValue("formula_expr",
     "if Age < 18 then 'Minor' elseif Age < 65 then 'Adult' else 'Senior' endif")
 ```
 
-### filter — Rename or remove fields ✅ (type string only)
+### filter — Rename or remove fields ✅
 ```python
 flt = stream.createAt("filter", "Filter Fields", 400, 200)
-# ⚠️ Properties UNVERIFIED — test before use
+
+# Whitelist mode: only named fields pass through
+flt.setPropertyValue("default_include", False)
+flt.setKeyedPropertyValue("include", "CardID",    True)
+flt.setKeyedPropertyValue("include", "Amount",    True)
+
+# Rename a field
+flt.setKeyedPropertyValue("new_name", "TimeStamp", "First_Tx_Date")
+
+# Blacklist mode: drop a specific field, keep everything else
+flt.setKeyedPropertyValue("include", "CHURN_FLAG", False)
 ```
 
 ### filler — Replace missing values ✅
@@ -213,10 +241,13 @@ fil.setPropertyValue("replace_with", "0")             # ✅
 # fil.setPropertyValue("replace_with", "0")
 ```
 
-### distinct — Remove duplicates ✅ (type string only)
+### distinct — Remove duplicates / keep first per key ✅
 ```python
-dis = stream.createAt("distinct", "Distinct", 400, 200)
-# ⚠️ Properties UNVERIFIED — test before use
+dis = stream.createAt("distinct", "First Tx Distinct", 300, 400)
+dis.setPropertyValue("fields",    ["CardID"])                    # key field(s)
+dis.setPropertyValue("sort_keys", [["TimeStamp", "Ascending"]])  # order before dedup
+dis.setPropertyValue("mode",      "Include")                     # keep first record
+# Pair with a filter node to rename the retained sort key field
 ```
 
 ### partition — Split data into training / testing partitions ✅
