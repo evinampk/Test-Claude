@@ -171,8 +171,9 @@ bal = stream.createAt("balance", "Balance", 1500, 300)
 # CHAID MODEL
 chaid_node = stream.createAt("chaid", "CHAID Model", 1650, 300)
 
-# EVALUATION — gains chart (placed below nugget on canvas)
-ev = stream.createAt("evaluation", "Gains Chart", 1800, 500)
+# NOTE: evaluation node is created AFTER the builder runs (see bottom of script).
+# Creating it here and linking later fails silently — Modeler ignores the link
+# because the evaluation node has no context of the nugget's scoring fields.
 
 # LINKS
 # ---------------------------------------------------------------
@@ -227,6 +228,10 @@ try:
     stream.unlink(bal, chaid_nugget)
 except:
     pass
+
+# Create evaluation node NOW (after nugget exists) so Modeler can resolve
+# the scoring field context when the link is made.
+ev = stream.createAt("evaluation", "Gains Chart", 1800, 500)
 
 # Wire evaluation path: test partition → nugget → gains chart
 chaid_nugget.setLocation(1650, 500)
