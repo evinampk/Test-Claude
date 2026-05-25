@@ -20,10 +20,8 @@
 #   FIX 3 — CHAID nugget found via getTypeName() loop (not getLabel)
 #   FIX 4 — Partition node explicitly configured: training=70 / testing=30 / validation=0
 #            Previously created with no properties — Modeler silently defaulted to 50/50
-#   FIX 5 — Evaluation path corrected: nugget → ev
-#            Nugget auto-inherits upstream from builder (bal → nugget).
-#            stream.link(sel_test, nugget) fails silently — nugget allows only one upstream.
-#            Correct pattern: just link nugget → ev after builder runs.
+#   FIX 5 — Evaluation path: unlink bal→nugget (auto-wired by builder.run()), then
+#            link sel_test → nugget → ev so evaluation uses held-out test records only.
 #
 # *** BEFORE RUNNING: verify DSN name and table name match your environment ***
 
@@ -164,6 +162,10 @@ sel_train = stream.createAt("select", "Training Only", 1350, 300)
 sel_train.setPropertyValue("mode",      "Include")
 sel_train.setPropertyValue("condition", 'Partition = "1_Training"')
 
+sel_test = stream.createAt("select", "Test Only", 1350, 500)
+sel_test.setPropertyValue("mode",      "Include")
+sel_test.setPropertyValue("condition", 'Partition = "2_Testing"')
+
 bal = stream.createAt("balance", "Balance", 1500, 300)
 
 # CHAID MODEL
@@ -202,6 +204,9 @@ stream.link(part,      sel_train)
 stream.link(sel_train, bal)
 stream.link(bal,       chaid_node)
 
+# Test path: partition → test select (nugget linked in after builder runs)
+stream.link(part, sel_test)
+
 # RUN model builder — nugget is auto-created and inherits upstream from builder
 chaid_node.run([])
 
@@ -215,9 +220,16 @@ for node in stream.getNodes():
 if chaid_nugget is None:
     raise RuntimeError("chaidmodel nugget not found — check CHAID built successfully")
 
-# Nugget already has data flowing from the training path (bal → nugget auto-wired).
-# Just add the downstream connection: nugget → evaluation.
-# Do NOT try to link sel_test → nugget — nugget can only have one upstream data source.
+# After builder.run(), Modeler auto-wires bal → nugget.
+# Unlink that training path so we can connect test data instead.
+# bare except: stream.unlink() may not exist in all Modeler versions — unverified API call.
+try:
+    stream.unlink(bal, chaid_nugget)
+except:
+    pass
+
+# Wire evaluation path: test partition → nugget → gains chart
 chaid_nugget.setLocation(1650, 500)
+stream.link(sel_test,     chaid_nugget)
 stream.link(chaid_nugget, ev)
 ev.run([])
