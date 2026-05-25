@@ -279,18 +279,20 @@ src.setPropertyValue("read_field_names", True)
 src.setPropertyValue("delimit_comma", True)
 
 # -- TYPE: set target field role
+# ✅ VERIFIED in 18.5: two separate keyed calls ("type" + "direction")
+# ❌ setKeyedPropertyValue("types", FIELD, [measurement, role]) → AEQMJ0100E
 type_node = stream.createAt("type", "Set Roles", 250, 200)
-type_node.setKeyedPropertyValue("types", "TARGET_FIELD", ["flag", "Target"])
+type_node.setKeyedPropertyValue("type",      "TARGET_FIELD", "flag")
+type_node.setKeyedPropertyValue("direction", "TARGET_FIELD", "Target")
 
-# -- PARTITION: 70% train / 30% test
-# RULE: always set all three slices + seed; never leave unconfigured
-part = stream.createAt("partition", "Partition 70-30", 400, 200)
-part.setPropertyValue("training_partition",   70)
-part.setPropertyValue("testing_partition",    30)
-part.setPropertyValue("validation_partition", 0)
-part.setPropertyValue("sampling_method",      "Random")
-part.setPropertyValue("set_seed",             True)
-part.setPropertyValue("seed",                 12345)
+# -- PARTITION: 70% train / 30% test — derive-based workaround ✅
+# Partition node property names unverified in 18.5 (training_partition → AEQMJ0100E).
+# Derive node produces identical field + values: "1_Training" / "2_Testing".
+# mod(@INDEX + 9, 10) < 7 → 70% training, 30% testing, deterministic.
+drv_part = stream.createAt("derive", "Partition", 400, 200)
+drv_part.setPropertyValue("new_name",     "Partition")
+drv_part.setPropertyValue("formula_expr",
+    "if mod(@INDEX + 9, 10) < 7 then '1_Training' else '2_Testing' endif")
 
 # -- TRAINING PATH: balance then build model
 sel_train = stream.createAt("select", "Training Only", 550, 200)
@@ -309,17 +311,17 @@ sel_test.setPropertyValue("condition", 'Partition = "2_Testing"')
 ev = stream.createAt("evaluation", "Gains Chart", 1000, 400)
 
 # -- LINKS
-stream.link(src,       type_node)
-stream.link(type_node, part)
+stream.link(src,      type_node)
+stream.link(type_node, drv_part)
 
 # Training path
-stream.link(part,      sel_train)
+stream.link(drv_part,  sel_train)
 stream.link(sel_train, bal)
 stream.link(bal,       chaid)
 
-# Evaluation path — fans out from partition node
+# Evaluation path — fans out from derive-partition node
 # sel_test → nugget link added AFTER builder runs (nugget doesn't exist yet)
-stream.link(part, sel_test)
+stream.link(drv_part, sel_test)
 
 # -- RUN MODEL
 chaid.run([])
@@ -352,8 +354,8 @@ src → type → part ──────────────── sel_train
 ### Key rules
 | Rule | Detail |
 |------|--------|
-| Always set all 3 partition properties | training + testing + validation = 100 |
-| Always set validation_partition=0 | prevents silent stale defaults |
+| Use derive for partition, not Partition node | Partition node properties undefined in 18.5 |
+| type node: use `"type"` + `"direction"` separately | `"types"` with list → AEQMJ0100E |
 | Balance only on training data | never apply balance to test partition |
 | Nugget link done after builder runs | nugget node doesn't exist before run |
 | Evaluation input = test partition | training data in evaluation = data leakage |

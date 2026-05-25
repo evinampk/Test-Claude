@@ -192,13 +192,23 @@ mrg.setPropertyValue("join", "partialOuter")
 ### type — Set field roles and measurement levels ✅
 ```python
 types = stream.createAt("type", "Types", 250, 200)
-# setKeyedPropertyValue("types", "FIELDNAME", [measurement, role])
-# Measurement: "continuous" "nominal" "ordinal" "flag" "typeless"
-# Role: "Input" "Target" "Both" "None" "Partition" "Split"
-types.setKeyedPropertyValue("types", "Age",    ["continuous", "Input"])
-types.setKeyedPropertyValue("types", "Churn",  ["flag",       "Target"])
-types.setKeyedPropertyValue("types", "ID",     ["nominal",    "None"])
-# ⚠️ Field names are case-sensitive — must match source exactly
+
+# ✅ VERIFIED in 18.5: two separate keyed calls
+# "type"      sets the measurement level
+# "direction" sets the role
+types.setKeyedPropertyValue("type",      "Age",   "continuous")
+types.setKeyedPropertyValue("direction", "Age",   "Input")
+types.setKeyedPropertyValue("type",      "Churn", "flag")
+types.setKeyedPropertyValue("direction", "Churn", "Target")
+types.setKeyedPropertyValue("type",      "ID",    "nominal")
+types.setKeyedPropertyValue("direction", "ID",    "None")
+
+# Measurement values: "continuous" "nominal" "ordinal" "flag" "typeless"
+# Role values:        "Input" "Target" "Both" "None" "Partition" "Split"
+
+# ❌ DOES NOT EXIST in 18.5 — causes AEQMJ0100E:
+#   types.setKeyedPropertyValue("types", "Churn", ["flag", "Target"])
+# Field names are case-sensitive — must match source exactly
 ```
 
 ### derive — Create new calculated field ✅
@@ -250,21 +260,38 @@ dis.setPropertyValue("mode",      "Include")                     # keep first re
 # Pair with a filter node to rename the retained sort key field
 ```
 
-### partition — Split data into training / testing partitions ✅
+### partition — Split data into training / testing partitions ⚠️ PROPERTIES UNVERIFIED
 ```python
-part = stream.createAt("partition", "Partition 70-30", 1200, 300)
-part.setPropertyValue("training_partition",   70)   # % — must be integer
-part.setPropertyValue("testing_partition",    30)   # % — must be integer
-part.setPropertyValue("validation_partition", 0)    # explicitly 0 — prevents stale default
-part.setPropertyValue("sampling_method",      "Random")
-part.setPropertyValue("set_seed",             True)
-part.setPropertyValue("seed",                 12345)
-# Adds a "Partition" field to the data stream with values "1_Training" and "2_Testing"
-# Downstream: use select nodes to split paths
+# Node type string "partition" is correct — node creates fine.
+# Property names for setting the split % are UNVERIFIED in 18.5.
+# Confirmed WRONG (AEQMJ0100E — property undefined):
+#   ❌ part.setPropertyValue("training_partition", 70)
+
+# Candidates still to test — try one at a time:
+#   part.setPropertyValue("training_size",    70)   # ⚠️ try first
+#   part.setPropertyValue("testing_size",     30)
+#   part.setPropertyValue("validation_size",  0)
+#
+#   part.setPropertyValue("size_1",  70)            # ⚠️ try second
+#   part.setPropertyValue("size_2",  30)
+#   part.setPropertyValue("size_3",  0)
+#
+#   part.setPropertyValue("train_percent", 70)      # ⚠️ try third
+#   part.setPropertyValue("test_percent",  30)
+
+# ── VERIFIED WORKAROUND — derive-based 70/30 partition ✅ ──────────────────
+# Uses verified Derive node. Produces identical field values to the real Partition node.
+# mod(@INDEX + 9, 10) < 7  →  first 7 of every 10 records = "1_Training" (70%)
+#                              last  3 of every 10 records = "2_Testing"  (30%)
+# Deterministic: same split every run, no seed needed.
+drv_part = stream.createAt("derive", "Partition", 1200, 300)
+drv_part.setPropertyValue("new_name",     "Partition")
+drv_part.setPropertyValue("formula_expr",
+    "if mod(@INDEX + 9, 10) < 7 then '1_Training' else '2_Testing' endif")
+
+# Downstream select nodes — same as with the real Partition node:
 #   sel_train: condition = 'Partition = "1_Training"'
 #   sel_test:  condition = 'Partition = "2_Testing"'
-# RULE: training + testing + validation must sum to 100
-# RULE: always set validation_partition=0 explicitly to avoid silent defaults
 ```
 
 ### balance — Oversample / undersample records ✅ (type string only)
