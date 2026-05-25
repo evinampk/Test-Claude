@@ -9,13 +9,19 @@
 #      test node is deleted at the end)
 #   2. Run this script from the Scripting console
 #   3. Check the Messages tab for the results
-#   4. Report which lines show ✅ READABLE and what value they return
+#   4. Report which lines show OK and what value they return
 #
 # WHAT IT DOES:
 #   - Creates a fresh Partition node
 #   - Attempts getPropertyValue() for each candidate name
-#   - Prints the result or the error for each
+#   - Prints OK + value for properties that exist
+#   - Prints FAIL for properties that do not exist
 #   - Deletes the test node when done
+#
+# NOTE — Jython exception handling:
+#   Modeler raises Java exceptions (AEQMJ0100E) for unknown properties.
+#   Java exceptions are NOT caught by "except Exception" in Jython.
+#   Must use bare "except:" to catch them.
 
 import modeler.api
 
@@ -81,8 +87,8 @@ for prop in candidates:
     try:
         val = part.getPropertyValue(prop)
         print("OK   " + prop + " = " + str(val))
-    except Exception as e:
-        print("FAIL " + prop + ": " + str(e))
+    except:
+        print("FAIL " + prop)
 
 print("=" * 55)
 print("Done. Copy these results and report back.")
