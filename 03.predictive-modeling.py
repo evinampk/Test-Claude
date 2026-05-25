@@ -20,8 +20,9 @@
 #   FIX 3 — CHAID nugget found via getTypeName() loop (not getLabel)
 #   FIX 4 — Partition node explicitly configured: training=70 / testing=30 / validation=0
 #            Previously created with no properties — Modeler silently defaulted to 50/50
-#   FIX 5 — Evaluation path: unlink bal→nugget (auto-wired by builder.run()), then
-#            link sel_test → nugget → ev so evaluation uses held-out test records only.
+#   FIX 5 — Evaluation path: create ev AFTER builder runs and nugget is found,
+#            then link nugget → ev and run ev. Same pattern as 02 segmentation
+#            (nugget → agg nodes created post-run). Pre-creating ev fails silently.
 #
 # *** BEFORE RUNNING: verify DSN name and table name match your environment ***
 
@@ -162,18 +163,10 @@ sel_train = stream.createAt("select", "Training Only", 1350, 300)
 sel_train.setPropertyValue("mode",      "Include")
 sel_train.setPropertyValue("condition", 'Partition = "1_Training"')
 
-sel_test = stream.createAt("select", "Test Only", 1350, 500)
-sel_test.setPropertyValue("mode",      "Include")
-sel_test.setPropertyValue("condition", 'Partition = "2_Testing"')
-
 bal = stream.createAt("balance", "Balance", 1500, 300)
 
 # CHAID MODEL
 chaid_node = stream.createAt("chaid", "CHAID Model", 1650, 300)
-
-# NOTE: evaluation node is created AFTER the builder runs (see bottom of script).
-# Creating it here and linking later fails silently — Modeler ignores the link
-# because the evaluation node has no context of the nugget's scoring fields.
 
 # LINKS
 # ---------------------------------------------------------------
@@ -205,13 +198,10 @@ stream.link(part,      sel_train)
 stream.link(sel_train, bal)
 stream.link(bal,       chaid_node)
 
-# Test path: partition → test select (nugget linked in after builder runs)
-stream.link(part, sel_test)
-
-# RUN model builder — nugget is auto-created and inherits upstream from builder
+# RUN model builder — nugget is auto-created and auto-wired to bal (training upstream)
 chaid_node.run([])
 
-# FIND CHAID NUGGET — safe pattern: loop getNodes() and check getTypeName()
+# FIND CHAID NUGGET — same pattern as 02 segmentation file: loop getNodes(), match typeName
 chaid_nugget = None
 for node in stream.getNodes():
     if node.getTypeName() == "chaidmodel":
@@ -221,20 +211,10 @@ for node in stream.getNodes():
 if chaid_nugget is None:
     raise RuntimeError("chaidmodel nugget not found — check CHAID built successfully")
 
-# After builder.run(), Modeler auto-wires bal → nugget.
-# Unlink that training path so we can connect test data instead.
-# bare except: stream.unlink() may not exist in all Modeler versions — unverified API call.
-try:
-    stream.unlink(bal, chaid_nugget)
-except:
-    pass
-
-# Create evaluation node NOW (after nugget exists) so Modeler can resolve
-# the scoring field context when the link is made.
+# Create output nodes AFTER nugget exists — same pattern as segmentation file
+# (nugget → agg_cluster / agg_total). Pre-creating and linking later fails silently.
 ev = stream.createAt("evaluation", "Gains Chart", 1800, 500)
 
-# Wire evaluation path: test partition → nugget → gains chart
 chaid_nugget.setLocation(1650, 500)
-stream.link(sel_test,     chaid_nugget)
 stream.link(chaid_nugget, ev)
 ev.run([])
