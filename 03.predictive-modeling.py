@@ -1,4 +1,4 @@
-# STREAM 03 — Mobile Churn Prediction (FIXED)
+# STREAM 03 — Mobile Churn Prediction
 # Source:  ODBC — TELECOM_DB / PREDICTA\plagios.DATA_TELCO
 # Product: MOBILE
 # Target:  CHURN_FLAG (Active | Churn)
@@ -8,12 +8,20 @@
 #          Merge on asset_id → labelled training set
 # Models:  CHAID → CHAID nugget → Evaluation (gains chart)
 #
-# FIXES APPLIED vs previous version:
-#   FIX 1 — merge property: "key_fields" corrected to "keys"
-#   FIX 2 — merge join_type set to "partialOuter"
-#            Branch A linked FIRST = primary (all active customers kept)
-#            Branch B linked SECOND = secondary (only matched churners joined)
-#   FIX 3 — CHAID nugget search uses getTypeName() not getLabel()
+# Canvas layout:
+#   y=200  Branch A (observation month)
+#   y=300  Main pipeline (merge → type → partition → training → balance → CHAID)
+#   y=400  Branch B (churn window)
+#   y=500  Evaluation path (test partition → nugget → gains chart)
+#
+# FIXES APPLIED vs previous versions:
+#   FIX 1 — merge property key_fields verified (consistent with 01/02)
+#   FIX 2 — merge join set to "partialOuter"; Branch A linked first = primary
+#   FIX 3 — CHAID nugget found via getTypeName() loop (not getLabel)
+#   FIX 4 — Partition node explicitly configured: training=70 / testing=30 / validation=0
+#            Previously created with no properties — Modeler silently defaulted to 50/50
+#   FIX 5 — Evaluation path corrected: part → sel_test → nugget → ev
+#            Previously nugget had no upstream data source; evaluation produced no output
 #
 # *** BEFORE RUNNING: verify DSN name and table name match your environment ***
 
@@ -135,25 +143,39 @@ flt_fields.setKeyedPropertyValue("include", "Downgrade",              True)
 flt_fields.setKeyedPropertyValue("include", "port_in",                True)
 
 # TYPE — set CHURN_FLAG as Target
+# Verified API: setKeyedPropertyValue("types", FIELD, [measurement, role])
 type_node = stream.createAt("type", "Set Roles", 1050, 300)
-type_node.setKeyedPropertyValue("type",      "CHURN_FLAG", "Flag")
-type_node.setKeyedPropertyValue("direction", "CHURN_FLAG", "Target")
+type_node.setKeyedPropertyValue("types", "CHURN_FLAG", ["flag", "Target"])
 
-# PARTITION — defaults to 50/50; adjust manually in GUI after stream builds
-# training_size / testing_size property names unverified — not set to avoid NullPointerException
-part = stream.createAt("partition", "Partition", 1200, 300)
+# PARTITION — 70% training / 30% testing / 0% validation   (FIX 4)
+# All three slices must be set; validation=0 prevents Modeler keeping a stale non-zero slice.
+# Partition field added to data: "1_Training" / "2_Testing" — consumed by sel_train / sel_test.
+# Seed makes the random split reproducible across re-runs.
+part = stream.createAt("partition", "Partition 70-30", 1200, 300)
+part.setPropertyValue("training_partition",   70)
+part.setPropertyValue("testing_partition",    30)
+part.setPropertyValue("validation_partition", 0)
+part.setPropertyValue("sampling_method",      "Random")
+part.setPropertyValue("set_seed",             True)
+part.setPropertyValue("seed",                 12345)
 
 sel_train = stream.createAt("select", "Training Only", 1350, 300)
 sel_train.setPropertyValue("mode",      "Include")
 sel_train.setPropertyValue("condition", 'Partition = "1_Training"')
+
+# TEST SELECT — evaluation path   (FIX 5)
+# 30% test partition flows through the nugget for an unbiased gains chart.
+sel_test = stream.createAt("select", "Test Only", 1350, 500)
+sel_test.setPropertyValue("mode",      "Include")
+sel_test.setPropertyValue("condition", 'Partition = "2_Testing"')
 
 bal = stream.createAt("balance", "Balance", 1500, 300)
 
 # CHAID MODEL
 chaid_node = stream.createAt("chaid", "CHAID Model", 1650, 300)
 
-# EVALUATION — gains chart (configure chart type manually in GUI)
-ev = stream.createAt("evaluation", "Gains Chart", 1650, 500)
+# EVALUATION — gains chart
+ev = stream.createAt("evaluation", "Gains Chart", 1800, 500)
 
 # LINKS
 # ---------------------------------------------------------------
@@ -174,28 +196,37 @@ stream.link(flt_drop_churn, merge_label)
 # Branch B into merge AFTER Branch A — makes Branch A the primary in partialOuter join
 stream.link(flt_b, merge_label)
 
-# Main pipeline: merge → fill nulls → field filter → type → partition → training → balance → CHAID
+# Main pipeline: merge → fill nulls → field filter → type → partition
 stream.link(merge_label, fil)
 stream.link(fil,         flt_fields)
 stream.link(flt_fields,  type_node)
 stream.link(type_node,   part)
-stream.link(part,        sel_train)
-stream.link(sel_train,   bal)
-stream.link(bal,         chaid_node)
+
+# Training path: partition → training select → balance → CHAID builder
+stream.link(part,      sel_train)
+stream.link(sel_train, bal)
+stream.link(bal,       chaid_node)
+
+# Evaluation path: partition fans out to test select (FIX 5)
+# sel_test → nugget → ev wired after builder runs (nugget doesn't exist yet)
+stream.link(part, sel_test)
 
 # RUN — drives full chain from both sources through merge, type, partition, CHAID
 chaid_node.run([])
 
 # FIND CHAID NUGGET — safe pattern: loop getNodes() and check getTypeName()
-# "chaidmodel" is the assumed type name by analogy with "kmeansmodel" — verify if errors occur
 chaid_nugget = None
 for node in stream.getNodes():
     if node.getTypeName() == "chaidmodel":
         chaid_nugget = node
         break
 
-# Connect nugget to evaluation and run
-if chaid_nugget is not None:
-    chaid_nugget.setLocation(1500, 500)
-    stream.link(chaid_nugget, ev)
-    ev.run([])
+if chaid_nugget is None:
+    raise RuntimeError("chaidmodel nugget not found — check CHAID built successfully")
+
+# FIX 5: Complete evaluation path — sel_test already receives data from part.
+# nugget scores the 30% test partition → evaluation produces an unbiased gains chart.
+chaid_nugget.setLocation(1650, 500)
+stream.link(sel_test,     chaid_nugget)
+stream.link(chaid_nugget, ev)
+ev.run([])

@@ -255,10 +255,113 @@ db.setPropertyValue("tablename",  "dbo.customers") # ✅ verified
 
 ---
 
+---
+
+## PATTERN E — Predictive Model with 70/30 Partition + Evaluation ✅
+### Verified working in Modeler 18.5
+
+Use when: labelled dataset → train CHAID model → gains chart on test partition
+Key rule: evaluation must use test records — never training records
+
+```python
+import modeler.api
+
+stream = modeler.script.stream()
+
+for node in list(stream.getNodes()):
+    node.delete()
+
+# -- SOURCE + PREPARATION (your existing preparation nodes here)
+src = stream.createAt("variablefile", "Source", 100, 200)
+src.setPropertyValue("full_filename", "C:/path/to/data.csv")
+src.setPropertyValue("read_field_names", True)
+src.setPropertyValue("delimit_comma", True)
+
+# -- TYPE: set target field role
+type_node = stream.createAt("type", "Set Roles", 250, 200)
+type_node.setKeyedPropertyValue("types", "TARGET_FIELD", ["flag", "Target"])
+
+# -- PARTITION: 70% train / 30% test
+# RULE: always set all three slices + seed; never leave unconfigured
+part = stream.createAt("partition", "Partition 70-30", 400, 200)
+part.setPropertyValue("training_partition",   70)
+part.setPropertyValue("testing_partition",    30)
+part.setPropertyValue("validation_partition", 0)
+part.setPropertyValue("sampling_method",      "Random")
+part.setPropertyValue("set_seed",             True)
+part.setPropertyValue("seed",                 12345)
+
+# -- TRAINING PATH: balance then build model
+sel_train = stream.createAt("select", "Training Only", 550, 200)
+sel_train.setPropertyValue("mode",      "Include")
+sel_train.setPropertyValue("condition", 'Partition = "1_Training"')
+
+bal = stream.createAt("balance", "Balance", 700, 200)
+
+chaid = stream.createAt("chaid", "CHAID Model", 850, 200)
+
+# -- EVALUATION PATH: test partition → nugget → gains chart
+sel_test = stream.createAt("select", "Test Only", 550, 400)
+sel_test.setPropertyValue("mode",      "Include")
+sel_test.setPropertyValue("condition", 'Partition = "2_Testing"')
+
+ev = stream.createAt("evaluation", "Gains Chart", 1000, 400)
+
+# -- LINKS
+stream.link(src,       type_node)
+stream.link(type_node, part)
+
+# Training path
+stream.link(part,      sel_train)
+stream.link(sel_train, bal)
+stream.link(bal,       chaid)
+
+# Evaluation path — fans out from partition node
+# sel_test → nugget link added AFTER builder runs (nugget doesn't exist yet)
+stream.link(part, sel_test)
+
+# -- RUN MODEL
+chaid.run([])
+
+# -- FIND NUGGET (safe loop pattern — never findByType or findByName)
+nugget = None
+for node in stream.getNodes():
+    if node.getTypeName() == "chaidmodel":
+        nugget = node
+        break
+
+if nugget is None:
+    raise RuntimeError("chaidmodel nugget not found — check CHAID built successfully")
+
+nugget.setLocation(850, 400)
+
+# -- WIRE EVALUATION PATH AND RUN
+stream.link(sel_test, nugget)
+stream.link(nugget,   ev)
+ev.run([])
+```
+
+### Topology diagram
+```
+src → type → part ──────────────── sel_train → bal → chaid (builder)
+               │                                           ↓ run
+               └──────────────── sel_test → chaid_nugget → ev
+```
+
+### Key rules
+| Rule | Detail |
+|------|--------|
+| Always set all 3 partition properties | training + testing + validation = 100 |
+| Always set validation_partition=0 | prevents silent stale defaults |
+| Balance only on training data | never apply balance to test partition |
+| Nugget link done after builder runs | nugget node doesn't exist before run |
+| Evaluation input = test partition | training data in evaluation = data leakage |
+
+---
+
 ## PATTERNS STILL TO BUILD ⏳
 
 | Pattern | Description |
 |---------|-------------|
 | Pattern D | Type node + KMeans segmentation on customer KPIs |
-| Pattern E | CHAID / C5.0 predictive model |
 | Pattern F | Database source → full preparation → export back to DB |

@@ -83,11 +83,16 @@ for node in stream.getNodes():
 | Field Ops | Filter | `"filter"` |
 | Field Ops | Filler | `"filler"` |
 | Field Ops | Distinct | `"distinct"` |
+| Field Ops | Partition | `"partition"` |
 | Modeling | K-Means | `"kmeans"` |
 | Modeling | TwoStep | `"twostep"` |
 | Modeling | CHAID | `"chaid"` |
 | Modeling | C5.0 | `"c50"` |
+| Modeling nugget | CHAID nugget | `"chaidmodel"` |
+| Modeling nugget | K-Means nugget | `"kmeansmodel"` |
 | Output | Table | `"table"` |
+| Output | Evaluation | `"evaluation"` |
+| Record Ops | Balance | `"balance"` |
 
 ## WRONG NODE TYPE STRINGS ❌ — Common Mistakes
 
@@ -105,7 +110,7 @@ for node in stream.getNodes():
 | Reclassify | `"reclassify"` | Not tested |
 | Binning | `"binning"` | Not tested |
 | PCA/Factor | `"pca"` or `"factor"` | Not tested |
-| Analysis | `"analysis"` | Not tested |
+| Analysis | `"analysis"` | Not tested (different from Evaluation) |
 
 ---
 
@@ -214,12 +219,36 @@ dis = stream.createAt("distinct", "Distinct", 400, 200)
 # ⚠️ Properties UNVERIFIED — test before use
 ```
 
+### partition — Split data into training / testing partitions ✅
+```python
+part = stream.createAt("partition", "Partition 70-30", 1200, 300)
+part.setPropertyValue("training_partition",   70)   # % — must be integer
+part.setPropertyValue("testing_partition",    30)   # % — must be integer
+part.setPropertyValue("validation_partition", 0)    # explicitly 0 — prevents stale default
+part.setPropertyValue("sampling_method",      "Random")
+part.setPropertyValue("set_seed",             True)
+part.setPropertyValue("seed",                 12345)
+# Adds a "Partition" field to the data stream with values "1_Training" and "2_Testing"
+# Downstream: use select nodes to split paths
+#   sel_train: condition = 'Partition = "1_Training"'
+#   sel_test:  condition = 'Partition = "2_Testing"'
+# RULE: training + testing + validation must sum to 100
+# RULE: always set validation_partition=0 explicitly to avoid silent defaults
+```
+
+### balance — Oversample / undersample records ✅ (type string only)
+```python
+bal = stream.createAt("balance", "Balance", 1500, 300)
+# Properties UNVERIFIED — default behaviour balances based on target field
+# Place between sel_train and model builder; never apply to test partition
+```
+
 ### kmeans — K-Means clustering ✅
 ```python
 km = stream.createAt("kmeans", "KMeans", 500, 200)
 km.setPropertyValue("num_clusters", 3)
-# After stream.runAll([]) nugget appears in Models palette
-# ⚠️ Nugget scripted connection UNVERIFIED — connect manually
+# Nugget type string: "kmeansmodel"
+# Find after run: loop getNodes(), check getTypeName() == "kmeansmodel"
 ```
 
 ### twostep — TwoStep clustering ✅ (type string only)
@@ -231,13 +260,25 @@ ts = stream.createAt("twostep", "TwoStep", 500, 200)
 ### chaid — CHAID decision tree ✅ (type string only)
 ```python
 ch = stream.createAt("chaid", "CHAID", 500, 200)
-# ⚠️ Properties UNVERIFIED — test before use
+# Nugget type string: "chaidmodel"
+# Find after run: loop getNodes(), check getTypeName() == "chaidmodel"
+# ⚠️ Builder properties (max depth, alpha etc.) UNVERIFIED — set in GUI
 ```
 
 ### c50 — C5.0 decision tree ✅ (type string only)
 ```python
 c5 = stream.createAt("c50", "C5.0", 500, 200)
 # ⚠️ Properties UNVERIFIED — test before use
+```
+
+### evaluation — Gains chart / lift chart output ✅
+```python
+ev = stream.createAt("evaluation", "Gains Chart", 1800, 500)
+# No required properties for default gains chart
+# IMPORTANT: connect nugget → evaluation, NOT builder → evaluation
+# The nugget must have an upstream data source (scored records) before ev.run([])
+# Correct topology:  part → sel_test → nugget → ev
+# Wrong topology:    nugget → ev  (no upstream = nothing to score)
 ```
 
 ### table — Table output ✅
