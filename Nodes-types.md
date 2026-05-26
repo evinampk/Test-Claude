@@ -305,13 +305,25 @@ ts = stream.createAt("twostep", "TwoStep", 500, 200)
 # ⚠️ Properties UNVERIFIED — test before use
 ```
 
-### chaid — CHAID decision tree ✅ (type string only)
+### chaid — CHAID decision tree ✅
 ```python
 ch = stream.createAt("chaid", "CHAID", 500, 200)
-# Nugget type string: "chaidmodel"
-# Find after run: loop getNodes(), check getTypeName() == "chaidmodel"
 # ⚠️ Builder properties (max depth, alpha etc.) UNVERIFIED — set in GUI
 ```
+
+**CHAID nugget — finding it after run() ✅ VERIFIED Modeler 18.5:**
+```python
+chaid_node.run([])
+
+chaid_nugget = None
+for node in stream.getNodes():
+    if node.getLabel() == "CHURN_FLAG" and node != chaid_node:
+        # Nugget label = TARGET FIELD NAME, assigned automatically by Modeler
+        chaid_nugget = node
+        break
+```
+- ❌ `getTypeName() == "chaidmodel"` — DOES NOT WORK; internal class is `ApplyChaidRuleN`
+- ❌ `chaid_nugget.setLocation(x, y)` — `ApplyChaidRuleN` has no `setLocation` attribute
 
 ### c50 — C5.0 decision tree ✅ (type string only)
 ```python
@@ -319,14 +331,17 @@ c5 = stream.createAt("c50", "C5.0", 500, 200)
 # ⚠️ Properties UNVERIFIED — test before use
 ```
 
-### evaluation — Gains chart / lift chart output ✅
+### evaluation — Gains chart / lift chart output ✅ VERIFIED
 ```python
+# ✅ MUST be created AFTER builder runs and nugget is found
+chaid_node.run([])
+chaid_nugget = ...find by getLabel()...
+
 ev = stream.createAt("evaluation", "Gains Chart", 1800, 500)
-# No required properties for default gains chart
-# IMPORTANT: connect nugget → evaluation, NOT builder → evaluation
-# The nugget must have an upstream data source (scored records) before ev.run([])
-# Correct topology:  part → sel_test → nugget → ev
-# Wrong topology:    nugget → ev  (no upstream = nothing to score)
+stream.link(chaid_nugget, ev)
+ev.run([])
+
+# ❌ Pre-creating ev before nugget exists then linking = silent failure (no connection made)
 ```
 
 ### table — Table output ✅

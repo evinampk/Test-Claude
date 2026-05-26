@@ -259,10 +259,9 @@ db.setPropertyValue("tablename",  "dbo.customers") # ✅ verified
 ---
 
 ## PATTERN E — Predictive Model with 70/30 Partition + Evaluation ✅
-### Verified working in Modeler 18.5
+### Verified working in Modeler 18.5 — 03.predictive-modeling.py confirmed
 
-Use when: labelled dataset → train CHAID model → gains chart on test partition
-Key rule: evaluation must use test records — never training records
+Use when: labelled dataset → train CHAID model → gains chart evaluation
 
 ```python
 import modeler.api
@@ -293,71 +292,60 @@ part.setPropertyValue("testing_size",    30)
 part.setPropertyValue("validation_size", 0)
 part.setPropertyValue("random_seed",     12345)
 
-# -- TRAINING PATH: balance then build model
+# -- TRAINING PATH
 sel_train = stream.createAt("select", "Training Only", 550, 200)
 sel_train.setPropertyValue("mode",      "Include")
 sel_train.setPropertyValue("condition", 'Partition = "1_Training"')
 
 bal = stream.createAt("balance", "Balance", 700, 200)
-
 chaid = stream.createAt("chaid", "CHAID Model", 850, 200)
 
-# -- EVALUATION PATH: test partition → nugget → gains chart
-sel_test = stream.createAt("select", "Test Only", 550, 400)
-sel_test.setPropertyValue("mode",      "Include")
-sel_test.setPropertyValue("condition", 'Partition = "2_Testing"')
-
-ev = stream.createAt("evaluation", "Gains Chart", 1000, 400)
-
-# -- LINKS
+# -- LINKS (all before run)
 stream.link(src,       type_node)
 stream.link(type_node, part)
-
-# Training path
 stream.link(part,      sel_train)
 stream.link(sel_train, bal)
 stream.link(bal,       chaid)
 
-# Evaluation path — fans out from partition node
-# sel_test → nugget link added AFTER builder runs (nugget doesn't exist yet)
-stream.link(part, sel_test)
-
 # -- RUN MODEL
 chaid.run([])
 
-# -- FIND NUGGET (safe loop pattern — never findByType or findByName)
+# -- FIND NUGGET by label (target field name) ✅ VERIFIED
+# ❌ getTypeName() == "chaidmodel" does NOT work — internal class is ApplyChaidRuleN
+# ❌ nugget.setLocation() does NOT work — ApplyChaidRuleN has no setLocation attribute
 nugget = None
 for node in stream.getNodes():
-    if node.getTypeName() == "chaidmodel":
+    if node.getLabel() == "TARGET_FIELD" and node != chaid:
         nugget = node
         break
 
 if nugget is None:
-    raise RuntimeError("chaidmodel nugget not found — check CHAID built successfully")
+    raise RuntimeError("CHAID nugget not found")
 
-nugget.setLocation(850, 400)
-
-# -- WIRE EVALUATION PATH AND RUN
-stream.link(sel_test, nugget)
-stream.link(nugget,   ev)
+# -- CREATE OUTPUT NODES AFTER NUGGET EXISTS ✅ VERIFIED
+# Pre-creating ev before nugget exists then linking = silent failure (no connection made)
+ev = stream.createAt("evaluation", "Gains Chart", 1000, 400)
+stream.link(nugget, ev)
 ev.run([])
 ```
 
 ### Topology diagram
 ```
-src → type → part ──────────────── sel_train → bal → chaid (builder)
-               │                                           ↓ run
-               └──────────────── sel_test → chaid_nugget → ev
+src → type → part → sel_train → bal → chaid (builder)
+                                             ↓ run()
+                                       chaid_nugget → ev
 ```
 
-### Key rules
+### Key rules ✅ all verified in Modeler 18.5
 | Rule | Detail |
 |------|--------|
 | type node: use `"type"` + `"direction"` separately | `"types"` with list → AEQMJ0100E |
 | Partition node: use `training_size` / `testing_size` / `random_seed` | `training_partition` etc → AEQMJ0100E |
 | Balance only on training data | never apply balance to test partition |
-| Nugget link done after builder runs | nugget node doesn't exist before run |
-| Evaluation input = test partition | training data in evaluation = data leakage |
+| Find CHAID nugget with `getLabel() == target_field_name` | `getTypeName() == "chaidmodel"` does NOT work |
+| Never call `nugget.setLocation()` | `ApplyChaidRuleN` has no `setLocation` attribute |
+| Create evaluation node AFTER nugget is found | pre-creating and linking later = silent failure |
+| `stream.link(nugget, ev)` then `ev.run([])` | same pattern as segmentation nugget → aggregate |
 
 ---
 
