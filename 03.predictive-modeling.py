@@ -201,15 +201,17 @@ stream.link(bal,       chaid_node)
 # RUN model builder — nugget is auto-created and auto-wired to bal (training upstream)
 chaid_node.run([])
 
-# FIND CHAID NUGGET — same pattern as 02 segmentation file: loop getNodes(), match typeName
+# FIND CHAID NUGGET — same pattern as 02 segmentation file: match by label, exclude builder
+# Nugget label = target field name ("CHURN_FLAG"), set by Modeler automatically.
+# getTypeName() == "chaidmodel" does NOT work — unverified and confirmed failing.
 chaid_nugget = None
 for node in stream.getNodes():
-    if node.getTypeName() == "chaidmodel":
+    if node.getLabel() == "CHURN_FLAG" and node != chaid_node:
         chaid_nugget = node
         break
 
 if chaid_nugget is None:
-    raise RuntimeError("chaidmodel nugget not found — check CHAID built successfully")
+    raise RuntimeError("CHAID nugget not found — check CHAID built successfully")
 
 # Create output nodes AFTER nugget exists — same pattern as segmentation file
 # (nugget → agg_cluster / agg_total). Pre-creating and linking later fails silently.
