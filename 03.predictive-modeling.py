@@ -217,6 +217,5 @@ if chaid_nugget is None:
 # (nugget → agg_cluster / agg_total). Pre-creating and linking later fails silently.
 ev = stream.createAt("evaluation", "Gains Chart", 1800, 500)
 
-chaid_nugget.setLocation(1650, 500)
 stream.link(chaid_nugget, ev)
 ev.run([])
