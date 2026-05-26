@@ -75,6 +75,7 @@ for node in stream.getNodes():
 | Source | Variable File | `"variablefile"` |
 | Source | Database | `"database"` |
 | Record Ops | Select | `"select"` |
+| Record Ops | Merge | `"merge"` |
 | Record Ops | Aggregate | `"aggregate"` |
 | Record Ops | Sort | `"sort"` |
 | Record Ops | Append | `"append"` |
@@ -83,11 +84,16 @@ for node in stream.getNodes():
 | Field Ops | Filter | `"filter"` |
 | Field Ops | Filler | `"filler"` |
 | Field Ops | Distinct | `"distinct"` |
+| Field Ops | Partition | `"partition"` |
 | Modeling | K-Means | `"kmeans"` |
 | Modeling | TwoStep | `"twostep"` |
 | Modeling | CHAID | `"chaid"` |
 | Modeling | C5.0 | `"c50"` |
+| Modeling nugget | CHAID nugget | `"chaidmodel"` |
+| Modeling nugget | K-Means nugget | `"kmeansmodel"` |
 | Output | Table | `"table"` |
+| Output | Evaluation | `"evaluation"` |
+| Record Ops | Balance | `"balance"` |
 
 ## WRONG NODE TYPE STRINGS ❌ — Common Mistakes
 
@@ -101,11 +107,10 @@ for node in stream.getNodes():
 
 | Node | Likely String | Status |
 |------|--------------|--------|
-| Merge | `"merge"` | Not tested |
 | Reclassify | `"reclassify"` | Not tested |
 | Binning | `"binning"` | Not tested |
 | PCA/Factor | `"pca"` or `"factor"` | Not tested |
-| Analysis | `"analysis"` | Not tested |
+| Analysis | `"analysis"` | Not tested (different from Evaluation) |
 
 ---
 
@@ -166,16 +171,44 @@ stream.link(src1, app)
 stream.link(src2, app)
 ```
 
+### merge — Join two streams on key fields ✅
+```python
+mrg = stream.createAt("merge", "Merge", 500, 200)
+mrg.setPropertyValue("method",     "Keys")        # ✅ verified
+mrg.setPropertyValue("key_fields", ["CardID"])    # ✅ list, not string
+
+# join options:
+# "inner"        — only matching records from both inputs
+# "fullOuter"    — all records from both inputs, nulls where no match
+# "partialOuter" — ALL records from the PRIMARY (first-linked) input;
+#                  only matched records from SECONDARY inputs
+mrg.setPropertyValue("join", "partialOuter")
+
+# Link order matters for "partialOuter":
+#   stream.link(primary_node, mrg)    ← linked FIRST = primary (all records kept)
+#   stream.link(secondary_node, mrg)  ← linked SECOND = secondary (matched only)
+```
+
 ### type — Set field roles and measurement levels ✅
 ```python
 types = stream.createAt("type", "Types", 250, 200)
-# setKeyedPropertyValue("types", "FIELDNAME", [measurement, role])
-# Measurement: "continuous" "nominal" "ordinal" "flag" "typeless"
-# Role: "Input" "Target" "Both" "None" "Partition" "Split"
-types.setKeyedPropertyValue("types", "Age",    ["continuous", "Input"])
-types.setKeyedPropertyValue("types", "Churn",  ["flag",       "Target"])
-types.setKeyedPropertyValue("types", "ID",     ["nominal",    "None"])
-# ⚠️ Field names are case-sensitive — must match source exactly
+
+# ✅ VERIFIED in 18.5: two separate keyed calls
+# "type"      sets the measurement level
+# "direction" sets the role
+types.setKeyedPropertyValue("type",      "Age",   "continuous")
+types.setKeyedPropertyValue("direction", "Age",   "Input")
+types.setKeyedPropertyValue("type",      "Churn", "flag")
+types.setKeyedPropertyValue("direction", "Churn", "Target")
+types.setKeyedPropertyValue("type",      "ID",    "nominal")
+types.setKeyedPropertyValue("direction", "ID",    "None")
+
+# Measurement values: "continuous" "nominal" "ordinal" "flag" "typeless"
+# Role values:        "Input" "Target" "Both" "None" "Partition" "Split"
+
+# ❌ DOES NOT EXIST in 18.5 — causes AEQMJ0100E:
+#   types.setKeyedPropertyValue("types", "Churn", ["flag", "Target"])
+# Field names are case-sensitive — must match source exactly
 ```
 
 ### derive — Create new calculated field ✅
@@ -189,10 +222,20 @@ drv.setPropertyValue("formula_expr",
     "if Age < 18 then 'Minor' elseif Age < 65 then 'Adult' else 'Senior' endif")
 ```
 
-### filter — Rename or remove fields ✅ (type string only)
+### filter — Rename or remove fields ✅
 ```python
 flt = stream.createAt("filter", "Filter Fields", 400, 200)
-# ⚠️ Properties UNVERIFIED — test before use
+
+# Whitelist mode: only named fields pass through
+flt.setPropertyValue("default_include", False)
+flt.setKeyedPropertyValue("include", "CardID",    True)
+flt.setKeyedPropertyValue("include", "Amount",    True)
+
+# Rename a field
+flt.setKeyedPropertyValue("new_name", "TimeStamp", "First_Tx_Date")
+
+# Blacklist mode: drop a specific field, keep everything else
+flt.setKeyedPropertyValue("include", "CHURN_FLAG", False)
 ```
 
 ### filler — Replace missing values ✅
@@ -208,18 +251,52 @@ fil.setPropertyValue("replace_with", "0")             # ✅
 # fil.setPropertyValue("replace_with", "0")
 ```
 
-### distinct — Remove duplicates ✅ (type string only)
+### distinct — Remove duplicates / keep first per key ✅
 ```python
-dis = stream.createAt("distinct", "Distinct", 400, 200)
-# ⚠️ Properties UNVERIFIED — test before use
+dis = stream.createAt("distinct", "First Tx Distinct", 300, 400)
+dis.setPropertyValue("fields",    ["CardID"])                    # key field(s)
+dis.setPropertyValue("sort_keys", [["TimeStamp", "Ascending"]])  # order before dedup
+dis.setPropertyValue("mode",      "Include")                     # keep first record
+# Pair with a filter node to rename the retained sort key field
+```
+
+### partition — Split data into training / testing partitions ✅
+```python
+# ✅ VERIFIED property names (test_partition_properties.py — Modeler 18.5):
+#   training_size   — default 50
+#   testing_size    — default 50
+#   validation_size — default 0
+#   random_seed     — default 1234567
+#
+# ❌ CONFIRMED WRONG (AEQMJ0100E — property undefined):
+#   training_partition / testing_partition / validation_partition
+#   sampling_method / set_seed / seed
+#   size_1 / size_2 / size_3 / train_percent / test_percent
+part = stream.createAt("partition", "Partition 70-30", 1200, 300)
+part.setPropertyValue("training_size",   70)
+part.setPropertyValue("testing_size",    30)
+part.setPropertyValue("validation_size", 0)
+part.setPropertyValue("random_seed",     12345)
+# training_size + testing_size + validation_size must sum to 100
+# Partition adds a "Partition" field with values "1_Training" and "2_Testing"
+# Downstream select nodes:
+#   sel_train: condition = 'Partition = "1_Training"'
+#   sel_test:  condition = 'Partition = "2_Testing"'
+```
+
+### balance — Oversample / undersample records ✅ (type string only)
+```python
+bal = stream.createAt("balance", "Balance", 1500, 300)
+# Properties UNVERIFIED — default behaviour balances based on target field
+# Place between sel_train and model builder; never apply to test partition
 ```
 
 ### kmeans — K-Means clustering ✅
 ```python
 km = stream.createAt("kmeans", "KMeans", 500, 200)
 km.setPropertyValue("num_clusters", 3)
-# After stream.runAll([]) nugget appears in Models palette
-# ⚠️ Nugget scripted connection UNVERIFIED — connect manually
+# Nugget type string: "kmeansmodel"
+# Find after run: loop getNodes(), check getTypeName() == "kmeansmodel"
 ```
 
 ### twostep — TwoStep clustering ✅ (type string only)
@@ -228,16 +305,43 @@ ts = stream.createAt("twostep", "TwoStep", 500, 200)
 # ⚠️ Properties UNVERIFIED — test before use
 ```
 
-### chaid — CHAID decision tree ✅ (type string only)
+### chaid — CHAID decision tree ✅
 ```python
 ch = stream.createAt("chaid", "CHAID", 500, 200)
-# ⚠️ Properties UNVERIFIED — test before use
+# ⚠️ Builder properties (max depth, alpha etc.) UNVERIFIED — set in GUI
 ```
+
+**CHAID nugget — finding it after run() ✅ VERIFIED Modeler 18.5:**
+```python
+chaid_node.run([])
+
+chaid_nugget = None
+for node in stream.getNodes():
+    if node.getLabel() == "CHURN_FLAG" and node != chaid_node:
+        # Nugget label = TARGET FIELD NAME, assigned automatically by Modeler
+        chaid_nugget = node
+        break
+```
+- ❌ `getTypeName() == "chaidmodel"` — DOES NOT WORK; internal class is `ApplyChaidRuleN`
+- ❌ `chaid_nugget.setLocation(x, y)` — `ApplyChaidRuleN` has no `setLocation` attribute
 
 ### c50 — C5.0 decision tree ✅ (type string only)
 ```python
 c5 = stream.createAt("c50", "C5.0", 500, 200)
 # ⚠️ Properties UNVERIFIED — test before use
+```
+
+### evaluation — Gains chart / lift chart output ✅ VERIFIED
+```python
+# ✅ MUST be created AFTER builder runs and nugget is found
+chaid_node.run([])
+chaid_nugget = ...find by getLabel()...
+
+ev = stream.createAt("evaluation", "Gains Chart", 1800, 500)
+stream.link(chaid_nugget, ev)
+ev.run([])
+
+# ❌ Pre-creating ev before nugget exists then linking = silent failure (no connection made)
 ```
 
 ### table — Table output ✅

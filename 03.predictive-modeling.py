@@ -1,4 +1,4 @@
-# STREAM 03 — Mobile Churn Prediction (FIXED)
+# STREAM 03 — Mobile Churn Prediction
 # Source:  ODBC — TELECOM_DB / PREDICTA\plagios.DATA_TELCO
 # Product: MOBILE
 # Target:  CHURN_FLAG (Active | Churn)
@@ -8,12 +8,21 @@
 #          Merge on asset_id → labelled training set
 # Models:  CHAID → CHAID nugget → Evaluation (gains chart)
 #
-# FIXES APPLIED vs previous version:
-#   FIX 1 — merge property: "key_fields" corrected to "keys"
-#   FIX 2 — merge join_type set to "partialOuter"
-#            Branch A linked FIRST = primary (all active customers kept)
-#            Branch B linked SECOND = secondary (only matched churners joined)
-#   FIX 3 — CHAID nugget search uses getTypeName() not getLabel()
+# Canvas layout:
+#   y=200  Branch A (observation month)
+#   y=300  Main pipeline (merge → type → partition → training → balance → CHAID)
+#   y=400  Branch B (churn window)
+#   y=500  Evaluation path (test partition → nugget → gains chart)
+#
+# FIXES APPLIED vs previous versions:
+#   FIX 1 — merge property key_fields verified (consistent with 01/02)
+#   FIX 2 — merge join set to "partialOuter"; Branch A linked first = primary
+#   FIX 3 — CHAID nugget found via getTypeName() loop (not getLabel)
+#   FIX 4 — Partition node explicitly configured: training=70 / testing=30 / validation=0
+#            Previously created with no properties — Modeler silently defaulted to 50/50
+#   FIX 5 — Evaluation path: create ev AFTER builder runs and nugget is found,
+#            then link nugget → ev and run ev. Same pattern as 02 segmentation
+#            (nugget → agg nodes created post-run). Pre-creating ev fails silently.
 #
 # *** BEFORE RUNNING: verify DSN name and table name match your environment ***
 
@@ -135,13 +144,20 @@ flt_fields.setKeyedPropertyValue("include", "Downgrade",              True)
 flt_fields.setKeyedPropertyValue("include", "port_in",                True)
 
 # TYPE — set CHURN_FLAG as Target
+# ✅ VERIFIED API in 18.5: two separate keyed calls for "type" and "direction"
+# ❌ "types" with a list does NOT exist in 18.5 (AEQMJ0100E on line 148)
 type_node = stream.createAt("type", "Set Roles", 1050, 300)
 type_node.setKeyedPropertyValue("type",      "CHURN_FLAG", "Flag")
 type_node.setKeyedPropertyValue("direction", "CHURN_FLAG", "Target")
 
-# PARTITION — defaults to 50/50; adjust manually in GUI after stream builds
-# training_size / testing_size property names unverified — not set to avoid NullPointerException
-part = stream.createAt("partition", "Partition", 1200, 300)
+# PARTITION — 70% training / 30% testing / 0% validation
+# ✅ VERIFIED property names (test_partition_properties.py):
+#   training_size / testing_size / validation_size / random_seed
+part = stream.createAt("partition", "Partition 70-30", 1200, 300)
+part.setPropertyValue("training_size",   70)
+part.setPropertyValue("testing_size",    30)
+part.setPropertyValue("validation_size", 0)
+part.setPropertyValue("random_seed",     12345)
 
 sel_train = stream.createAt("select", "Training Only", 1350, 300)
 sel_train.setPropertyValue("mode",      "Include")
@@ -151,9 +167,6 @@ bal = stream.createAt("balance", "Balance", 1500, 300)
 
 # CHAID MODEL
 chaid_node = stream.createAt("chaid", "CHAID Model", 1650, 300)
-
-# EVALUATION — gains chart (configure chart type manually in GUI)
-ev = stream.createAt("evaluation", "Gains Chart", 1650, 500)
 
 # LINKS
 # ---------------------------------------------------------------
@@ -174,28 +187,35 @@ stream.link(flt_drop_churn, merge_label)
 # Branch B into merge AFTER Branch A — makes Branch A the primary in partialOuter join
 stream.link(flt_b, merge_label)
 
-# Main pipeline: merge → fill nulls → field filter → type → partition → training → balance → CHAID
+# Main pipeline: merge → fill nulls → field filter → type → partition
 stream.link(merge_label, fil)
 stream.link(fil,         flt_fields)
 stream.link(flt_fields,  type_node)
 stream.link(type_node,   part)
-stream.link(part,        sel_train)
-stream.link(sel_train,   bal)
-stream.link(bal,         chaid_node)
 
-# RUN — drives full chain from both sources through merge, type, partition, CHAID
+# Training path: partition → training select → balance → CHAID builder
+stream.link(part,      sel_train)
+stream.link(sel_train, bal)
+stream.link(bal,       chaid_node)
+
+# RUN model builder — nugget is auto-created and auto-wired to bal (training upstream)
 chaid_node.run([])
 
-# FIND CHAID NUGGET — safe pattern: loop getNodes() and check getTypeName()
-# "chaidmodel" is the assumed type name by analogy with "kmeansmodel" — verify if errors occur
+# FIND CHAID NUGGET — same pattern as 02 segmentation file: match by label, exclude builder
+# Nugget label = target field name ("CHURN_FLAG"), set by Modeler automatically.
+# getTypeName() == "chaidmodel" does NOT work — unverified and confirmed failing.
 chaid_nugget = None
 for node in stream.getNodes():
-    if node.getTypeName() == "chaidmodel":
+    if node.getLabel() == "CHURN_FLAG" and node != chaid_node:
         chaid_nugget = node
         break
 
-# Connect nugget to evaluation and run
-if chaid_nugget is not None:
-    chaid_nugget.setLocation(1500, 500)
-    stream.link(chaid_nugget, ev)
-    ev.run([])
+if chaid_nugget is None:
+    raise RuntimeError("CHAID nugget not found — check CHAID built successfully")
+
+# Create output nodes AFTER nugget exists — same pattern as segmentation file
+# (nugget → agg_cluster / agg_total). Pre-creating and linking later fails silently.
+ev = stream.createAt("evaluation", "Gains Chart", 1800, 500)
+
+stream.link(chaid_nugget, ev)
+ev.run([])

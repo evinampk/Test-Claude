@@ -30,7 +30,8 @@ STAGE 3 — Target grain derives
 ---
 
 ## PATTERN A — Full Transaction Preparation → Customer Level ✅
-### Verified working in Modeler 18.5
+### Verified working in Modeler 18.5 — production run confirmed (01.transactions.py)
+### Also confirms: merge "key_fields" property name ✅ | distinct properties ✅ | filter properties ✅
 
 Use when: raw transaction file → customer-level KPI table
 Source grain: TransactionID
@@ -255,10 +256,102 @@ db.setPropertyValue("tablename",  "dbo.customers") # ✅ verified
 
 ---
 
+---
+
+## PATTERN E — Predictive Model with 70/30 Partition + Evaluation ✅
+### Verified working in Modeler 18.5 — 03.predictive-modeling.py confirmed
+
+Use when: labelled dataset → train CHAID model → gains chart evaluation
+
+```python
+import modeler.api
+
+stream = modeler.script.stream()
+
+for node in list(stream.getNodes()):
+    node.delete()
+
+# -- SOURCE + PREPARATION (your existing preparation nodes here)
+src = stream.createAt("variablefile", "Source", 100, 200)
+src.setPropertyValue("full_filename", "C:/path/to/data.csv")
+src.setPropertyValue("read_field_names", True)
+src.setPropertyValue("delimit_comma", True)
+
+# -- TYPE: set target field role
+# ✅ VERIFIED in 18.5: two separate keyed calls ("type" + "direction")
+# ❌ setKeyedPropertyValue("types", FIELD, [measurement, role]) → AEQMJ0100E
+type_node = stream.createAt("type", "Set Roles", 250, 200)
+type_node.setKeyedPropertyValue("type",      "TARGET_FIELD", "flag")
+type_node.setKeyedPropertyValue("direction", "TARGET_FIELD", "Target")
+
+# -- PARTITION: 70% train / 30% test
+# ✅ VERIFIED property names in Modeler 18.5
+part = stream.createAt("partition", "Partition 70-30", 400, 200)
+part.setPropertyValue("training_size",   70)
+part.setPropertyValue("testing_size",    30)
+part.setPropertyValue("validation_size", 0)
+part.setPropertyValue("random_seed",     12345)
+
+# -- TRAINING PATH
+sel_train = stream.createAt("select", "Training Only", 550, 200)
+sel_train.setPropertyValue("mode",      "Include")
+sel_train.setPropertyValue("condition", 'Partition = "1_Training"')
+
+bal = stream.createAt("balance", "Balance", 700, 200)
+chaid = stream.createAt("chaid", "CHAID Model", 850, 200)
+
+# -- LINKS (all before run)
+stream.link(src,       type_node)
+stream.link(type_node, part)
+stream.link(part,      sel_train)
+stream.link(sel_train, bal)
+stream.link(bal,       chaid)
+
+# -- RUN MODEL
+chaid.run([])
+
+# -- FIND NUGGET by label (target field name) ✅ VERIFIED
+# ❌ getTypeName() == "chaidmodel" does NOT work — internal class is ApplyChaidRuleN
+# ❌ nugget.setLocation() does NOT work — ApplyChaidRuleN has no setLocation attribute
+nugget = None
+for node in stream.getNodes():
+    if node.getLabel() == "TARGET_FIELD" and node != chaid:
+        nugget = node
+        break
+
+if nugget is None:
+    raise RuntimeError("CHAID nugget not found")
+
+# -- CREATE OUTPUT NODES AFTER NUGGET EXISTS ✅ VERIFIED
+# Pre-creating ev before nugget exists then linking = silent failure (no connection made)
+ev = stream.createAt("evaluation", "Gains Chart", 1000, 400)
+stream.link(nugget, ev)
+ev.run([])
+```
+
+### Topology diagram
+```
+src → type → part → sel_train → bal → chaid (builder)
+                                             ↓ run()
+                                       chaid_nugget → ev
+```
+
+### Key rules ✅ all verified in Modeler 18.5
+| Rule | Detail |
+|------|--------|
+| type node: use `"type"` + `"direction"` separately | `"types"` with list → AEQMJ0100E |
+| Partition node: use `training_size` / `testing_size` / `random_seed` | `training_partition` etc → AEQMJ0100E |
+| Balance only on training data | never apply balance to test partition |
+| Find CHAID nugget with `getLabel() == target_field_name` | `getTypeName() == "chaidmodel"` does NOT work |
+| Never call `nugget.setLocation()` | `ApplyChaidRuleN` has no `setLocation` attribute |
+| Create evaluation node AFTER nugget is found | pre-creating and linking later = silent failure |
+| `stream.link(nugget, ev)` then `ev.run([])` | same pattern as segmentation nugget → aggregate |
+
+---
+
 ## PATTERNS STILL TO BUILD ⏳
 
 | Pattern | Description |
 |---------|-------------|
 | Pattern D | Type node + KMeans segmentation on customer KPIs |
-| Pattern E | CHAID / C5.0 predictive model |
 | Pattern F | Database source → full preparation → export back to DB |
